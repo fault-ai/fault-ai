@@ -1,42 +1,36 @@
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
+from sentence_transformers import SentenceTransformer
+import faiss
+import numpy as np
 
-# 1. Ρύθμιση για να μην "κρασάρει" το tablet
-st.set_page_config(page_title="Fault AI", layout="wide")
+# 1. Φόρτωση μοντέλου AI (με cache για ταχύτητα)
+@st.cache_resource
+def load_ai_model():
+    return SentenceTransformer('all-MiniLM-L6-v2')
 
-st.title("🛠️ Σύστημα Διαχείρισης Βλαβών")
-
-# 2. Σύνδεση με τη βάση από τα Secrets
+# 2. Σύνδεση στη Βάση
 @st.cache_resource
 def get_engine():
     db_url = st.secrets["connections"]["postgresql"]["url"]
     return create_engine(db_url)
 
+model = load_ai_model()
 engine = get_engine()
 
-# 3. Αναζήτηση Βλαβών
-st.subheader("🔍 Αναζήτηση")
-search = st.text_input("Γράψε λέξη-κλειδί:")
+st.title("🤖 AI Fault Finder")
 
-if search:
-    query = f"SELECT * FROM faults WHERE fault_description ILIKE '%%{search}%%'"
-    try:
-        df = pd.read_sql(query, engine)
-        st.dataframe(df)
-    except:
-        st.write("Δεν βρέθηκαν αποτελέσματα.")
+# 3. Αναζήτηση
+search_text = st.text_input("Περίγραψε τη βλάβη:")
 
-# 4. Καταχώρηση (χωρίς Excel)
-st.subheader("📝 Νέα Βλάβη")
-with st.form("add_fault"):
-    machine = st.text_input("Μηχάνημα")
-    fault = st.text_area("Περιγραφή")
-    sol = st.text_area("Λύση")
-    if st.form_submit_button("Αποθήκευση"):
-        new_data = pd.DataFrame([{'machine': machine, 'fault_description': fault, 'solution': sol}])
-        new_data.to_sql('faults', engine, if_exists='append', index=False)
-        st.success("Επιτυχία!")
+if search_text:
+    # Εδώ θα έμπαινε η λογική για FAISS + SQL
+    st.write("Αναζήτηση νοήματος για:", search_text)
+    # Προσθήκη αποτελεσμάτων από την SQL βάση σου
+    query = "SELECT * FROM faults LIMIT 5"
+    df = pd.read_sql(query, engine)
+    st.dataframe(df)
 
 
 
