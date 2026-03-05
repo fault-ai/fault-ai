@@ -1,41 +1,44 @@
 import streamlit as st
 import pandas as pd
 import os
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
+from fuzzywuzzy import fuzz
 
-st.title("🛠️ Σύστημα Διαχείρισης Βλαβών")
+st.title("🤖 AI Αναζήτηση Βλαβών (Similarity)")
 
 db_url = os.environ.get("DB_URL")
 engine = create_engine(db_url)
 
-# 1. Φόρμα καταχώρησης με τα σωστά ονόματα στηλών (ΤΟΜΕΑΣ, ΠΕΡΙΓΡΑΦΗ)
-with st.form("new_fault", clear_on_submit=True):
-    tomeas = st.text_input("Τομέας (π.χ. ΠΙΝΑΚΑΣ ΑΣΦΑΛΕΙΩΝ):")
-    perigrafi = st.text_area("Περιγραφή Βλάβης:")
-    submitted = st.form_submit_button("Αποθήκευση")
+# 1. Φόρτωση Ιστορικού
+@st.cache_data(ttl=60) # Ανανέωση κάθε λεπτό
+def load_history():
+    return pd.read_sql("SELECT * FROM faults", engine)
+
+df = load_history()
+
+# 2. Πεδίο Αναζήτησης
+user_input = st.text_input("Περιγράψτε τη νέα βλάβη:")
+
+if user_input:
+    # Υπολογισμός ομοιότητας για κάθε εγγραφή στο ιστορικό
+    results = []
+    for index, row in df.iterrows():
+        # Σύγκριση της εισαγωγής του χρήστη με τη στήλη "ΠΕΡΙΓΡΑΦΗ"
+        similarity = fuzz.token_sort_ratio(user_input, str(row['ΠΕΡΙΓΡΑΦΗ']))
+        
+        results.append({
+            "ΤΟΜΕΑΣ": row['ΤΟΜΕΑΣ'],
+            "ΠΕΡΙΓΡΑΦΗ": row['ΠΕΡΙΓΡΑΦΗ'],
+            "ΟΜΟΙΟΤΗΤΑ": f"{similarity}%",
+            "score": similarity # για το sorting
+        })
     
-    if submitted:
-        try:
-            with engine.connect() as conn:
-                # Χρησιμοποιούμε τα ονόματα που ήδη έχει ο πίνακας στη βάση σου
-                conn.execute(
-                    text('INSERT INTO faults ("ΤΟΜΕΑΣ", "ΠΕΡΙΓΡΑΦΗ") VALUES (:t, :p)'), 
-                    {"t": tomeas, "p": perigrafi}
-                )
-                conn.commit()
-            st.success("✅ Η βλάβη αποθηκεύτηκε επιτυχώς!")
-        except Exception as e:
-            st.error(f"❌ Σφάλμα αποθήκευσης: {e}")
-
-# 2. Εμφάνιση πίνακα
-st.subheader("Καταχωρημένες Βλάβες")
-try:
-    # Διαβάζουμε όλο τον πίνακα για να δούμε τα πάντα
-    df = pd.read_sql("SELECT * FROM faults", engine)
-    st.table(df) # Χρησιμοποιούμε st.table για πιο καθαρή εμφάνιση
-except Exception as e:
-    st.write("Δεν ήταν δυνατή η ανάγνωση των δεδομένων.")
-
+    # Μετατροπή σε DataFrame και ταξινόμηση (τα πιο όμοια πάνω)
+    res_df = pd.DataFrame(results).sort_values(by="score", ascending=False)
+    
+    st.subheader("Πιθανές λύσεις από το ιστορικό:")
+    # Δείξε μόνο όσα έχουν ομοιότητα πάνω από 30%
+    st.table(res_df[res_df['score'] > 30].drop(columns=['score']))
 
 
 
