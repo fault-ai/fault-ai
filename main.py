@@ -8,45 +8,33 @@ st.title("🛠️ Σύστημα Διαχείρισης Βλαβών")
 db_url = os.environ.get("DB_URL")
 engine = create_engine(db_url)
 
-# 1. Δημιουργία πίνακα με πιο σίγουρο τρόπο
-try:
-    with engine.connect() as conn:
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS faults (
-                id SERIAL PRIMARY KEY, 
-                fault_description TEXT, 
-                solution TEXT
-            )
-        """))
-        conn.commit()
-except Exception as e:
-    st.error(f"Σφάλμα δημιουργίας πίνακα: {e}")
-
-# 2. Φόρμα καταχώρησης
+# 1. Φόρμα καταχώρησης με τα σωστά ονόματα στηλών (ΤΟΜΕΑΣ, ΠΕΡΙΓΡΑΦΗ)
 with st.form("new_fault", clear_on_submit=True):
-    desc = st.text_input("Περιγραφή βλάβης:")
-    sol = st.text_input("Λύση:")
+    tomeas = st.text_input("Τομέας (π.χ. ΠΙΝΑΚΑΣ ΑΣΦΑΛΕΙΩΝ):")
+    perigrafi = st.text_area("Περιγραφή Βλάβης:")
     submitted = st.form_submit_button("Αποθήκευση")
     
     if submitted:
         try:
             with engine.connect() as conn:
+                # Χρησιμοποιούμε τα ονόματα που ήδη έχει ο πίνακας στη βάση σου
                 conn.execute(
-                    text("INSERT INTO faults (fault_description, solution) VALUES (:d, :s)"), 
-                    {"d": desc, "s": sol}
+                    text('INSERT INTO faults ("ΤΟΜΕΑΣ", "ΠΕΡΙΓΡΑΦΗ") VALUES (:t, :p)'), 
+                    {"t": tomeas, "p": perigrafi}
                 )
                 conn.commit()
-            st.success("✅ Η βλάβη αποθηκεύτηκε!")
+            st.success("✅ Η βλάβη αποθηκεύτηκε επιτυχώς!")
         except Exception as e:
             st.error(f"❌ Σφάλμα αποθήκευσης: {e}")
 
-# 3. Εμφάνιση πίνακα
+# 2. Εμφάνιση πίνακα
 st.subheader("Καταχωρημένες Βλάβες")
 try:
+    # Διαβάζουμε όλο τον πίνακα για να δούμε τα πάντα
     df = pd.read_sql("SELECT * FROM faults", engine)
-    st.dataframe(df)
-except:
-    st.write("Δεν υπάρχουν ακόμα δεδομένα.")
+    st.table(df) # Χρησιμοποιούμε st.table για πιο καθαρή εμφάνιση
+except Exception as e:
+    st.write("Δεν ήταν δυνατή η ανάγνωση των δεδομένων.")
 
 
 
