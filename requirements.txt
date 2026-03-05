@@ -2,6 +2,3 @@ streamlit
 pandas
 sqlalchemy
 psycopg2-binary
-sentence-transformers
-faiss-cpu
-numpy
