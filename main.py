@@ -61,3 +61,19 @@ if user_input and not df.empty:
         st.table(res_df)
     else:
         st.info("Δεν βρέθηκαν παρόμοιες βλάβες.")
+# --- Τμήμα 3: Backup Δεδομένων ---
+st.divider()
+st.subheader("💾 Backup Δεδομένων")
+
+@st.cache_data
+def convert_df(df):
+    return df.to_csv(index=False).encode('utf-8')
+
+csv = convert_df(df)
+
+st.download_button(
+    label="Κατέβασμα ιστορικού σε αρχείο CSV",
+    data=csv,
+    file_name='fault_history_backup.csv',
+    mime='text/csv',
+)
