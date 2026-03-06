@@ -1,53 +1,63 @@
 import streamlit as st
 import pandas as pd
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from fuzzywuzzy import fuzz
 
-st.set_page_config(page_title="Fault AI - Similarity Search", layout="wide")
-st.title("🤖 AI Αναζήτηση Ομοιότητας Βλαβών")
+st.set_page_config(page_title="Fault AI Pro", layout="wide")
+st.title("🛠️ Σύστημα Διαχείρισης & AI Αναζήτησης Βλαβών")
 
 db_url = os.environ.get("DB_URL")
 engine = create_engine(db_url)
 
-# 1. Φόρτωση όλου του ιστορικού από τη βάση
-@st.cache_data(ttl=60)
-def load_all_data():
-    try:
-        return pd.read_sql("SELECT * FROM faults", engine)
-    except Exception as e:
-        st.error(f"Σφάλμα κατά τη φόρτωση: {e}")
-        return pd.DataFrame()
+# Φόρτωση δεδομένων
+@st.cache_data(ttl=10) # Μικρό TTL για να βλέπεις άμεσα τις νέες εγγραφές
+def get_data():
+    return pd.read_sql("SELECT * FROM faults", engine)
 
-df = load_all_data()
+df = get_data()
 
-# 2. Εισαγωγή νέας βλάβης για έλεγχο
-st.subheader("Αναζήτηση στο Ιστορικό")
-user_query = st.text_input("Γράψτε τη βλάβη που αντιμετωπίζετε:")
-
-if user_query and not df.empty:
-    results = []
-    
-    for _, row in df.iterrows():
-        # Υπολογισμός ομοιότητας (0-100)
-        # Συγκρίνουμε το κείμενο του χρήστη με τη στήλη ΠΕΡΙΓΡΑΦΗ
-        score = fuzz.token_set_ratio(user_query, str(row['ΠΕΡΙΓΡΑΦΗ']))
+# --- Τμήμα 1: Καταχώρηση Νέας Βλάβης ---
+with st.expander("➕ Προσθήκη νέας βλάβης στο ιστορικό"):
+    with st.form("add_fault", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            tomeas = st.text_input("Τομέας:")
+            perigrafi = st.text_area("Περιγραφή:")
+        with col2:
+            imera = st.text_input("Ημερομηνία (π.χ. 6/3/2026):")
+            antal = st.text_input("Ανταλλακτικά:")
         
-        results.append({
-            "ΤΟΜΕΑΣ": row.get('ΤΟΜΕΑΣ', 'N/A'),
-            "ΠΕΡΙΓΡΑΦΗ ΙΣΤΟΡΙΚΟΥ": row.get('ΠΕΡΙΓΡΑΦΗ', 'N/A'),
-            "ΑΝΤΑΛΛΑΚΤΙΚΑ": row.get('ΑΝΤΑΛΛΑΚΤΙΚΑ', '-'),
-            "ΟΜΟΙΟΤΗΤΑ": f"{score}%",
-            "raw_score": score
-        })
-    
-    # Μετατροπή σε DataFrame και ταξινόμηση από το μεγαλύτερο ποσοστό στο μικρότερο
-    res_df = pd.DataFrame(results).sort_values(by="raw_score", ascending=False)
-    
-    # Εμφάνιση των πιο σχετικών (π.χ. πάνω από 40% ομοιότητα)
-    st.write(f"Βρέθηκαν {len(res_df[res_df['raw_score'] > 40])} σχετικές εγγραφές:")
-    st.table(res_df[res_df['raw_score'] > 20].drop(columns=['raw_score']).head(10))
+        submitted = st.form_submit_button("Αποθήκευση στη βάση")
+        
+        if submitted:
+            with engine.connect() as conn:
+                conn.execute(text('INSERT INTO faults ("ΤΟΜΕΑΣ", "ΠΕΡΙΓΡΑΦΗ", "ΗΜΕΡΟΜΗΝΙΑ", "ΑΝΤΑΛΛΑΚΤΙΚΑ") VALUES (:t, :p, :h, :a)'), 
+                             {"t": tomeas, "p": perigrafi, "h": imera, "a": antal})
+                conn.commit()
+            st.success("Η βλάβη προστέθηκε επιτυχώς!")
+            st.rerun()
 
-elif df.empty:
-    st.warning("Η βάση δεδομένων φαίνεται να είναι άδεια ή δεν διαβάστηκε σωστά.")
+# --- Τμήμα 2: AI Αναζήτηση ---
+st.divider()
+st.subheader("🔍 Αναζήτηση στο Ιστορικό")
+user_input = st.text_input("Περιγράψτε τη βλάβη που αντιμετωπίζετε:")
 
+if user_input and not df.empty:
+    results = []
+    for _, row in df.iterrows():
+        score = fuzz.token_sort_ratio(user_input, str(row['ΠΕΡΙΓΡΑΦΗ']))
+        if score > 30:
+            results.append({
+                "ΤΟΜΕΑΣ": row['ΤΟΜΕΑΣ'],
+                "ΠΕΡΙΓΡΑΦΗ": row['ΠΕΡΙΓΡΑΦΗ'],
+                "ΗΜΕΡΟΜΗΝΙΑ": row['ΗΜΕΡΟΜΗΝΙΑ'],
+                "ΑΝΤΑΛΛΑΚΤΙΚΑ": row['ΑΝΤΑΛΛΑΚΤΙΚΑ'],
+                "ΟΜΟΙΟΤΗΤΑ": f"{score}%"
+            })
+    
+    if results:
+        res_df = pd.DataFrame(results).sort_values(by="ΟΜΟΙΟΤΗΤΑ", ascending=False)
+        st.table(res_df)
+    else:
+        st.info("Δεν βρέθηκαν παρόμοιες βλάβες.")
