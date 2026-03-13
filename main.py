@@ -51,3 +51,23 @@ if search_sn:
             st.warning("Δεν βρέθηκε ιστορικό για αυτό το Serial Number.")
     except Exception as e:
         st.error(f"Σφάλμα κατά την αναζήτηση: {e}")
+st.divider()
+st.subheader("🤖 AI Ανάλυση & Αναζήτηση Ομοιοτήτων")
+
+# Εδώ εισάγουμε το query για το AI
+user_query = st.text_input("Περιγράψτε τι ψάχνετε (π.χ. 'παρόμοιες βλάβες στον κινητήρα'):")
+
+if user_query:
+    # 1. Τραβάμε τα δεδομένα από τη βάση
+    query_all = 'SELECT "ΜΗΧΑΝΙΣΜΟΣ", "ΠΑΡΑΤΗΡΗΣΕΙΣ" FROM faults'
+    df_ai = pd.read_sql(query_all, engine)
+    
+    # 2. Απλή λογική αναζήτησης (ή κλήση σε AI API)
+    # Θα δείξουμε όσα έχουν κοινές λέξεις με το query του χρήστη
+    matches = df_ai[df_ai['ΠΑΡΑΤΗΡΗΣΕΙΣ'].str.contains(user_query, case=False, na=False)]
+    
+    if not matches.empty:
+        st.write("Βρέθηκαν παρόμοιες περιπτώσεις:")
+        st.dataframe(matches)
+    else:
+        st.info("Δεν βρέθηκαν παρόμοιες βλάβες με αυτά τα χαρακτηριστικά.")
