@@ -1,105 +1,53 @@
 import streamlit as st
 import pandas as pd
+import psycopg2
 import os
-from sqlalchemy import create_engine, text
-from fuzzywuzzy import fuzz
+from sqlalchemy import create_engine
 
-# --- ΡΥΘΜΙΣΗ ΑΣΦΑΛΕΙΑΣ ---
-# Άλλαξε το "1234" με τον κωδικό που επιθυμείς
-PASSWORD = "ΕΕΣΣΤΥ112013$" 
+# 1. Ρύθμιση Σύνδεσης
+DB_URL = os.environ.get("DB_URL") # Χρησιμοποιούμε το όνομα που δουλεύει στο Render σου
+engine = create_engine(DB_URL)
 
-def check_password():
-    if "password_correct" not in st.session_state:
-        st.session_state["password_correct"] = False
+st.title("🔧 Σύστημα Διαχείρισης & AI Αναζήτησης Βλαβών")
 
-    if st.session_state["password_correct"]:
-        return True
-
-    st.set_page_config(page_title="Είσοδος - Fault AI", page_icon="🔒")
-    st.title("🔒 Είσοδος στο Σύστημα")
+# 2. Φόρμα Καταχώρησης
+with st.form("fault_entry_form"):
+    st.subheader("Καταχώρηση Νέας Βλάβης")
+    col1, col2 = st.columns(2)
+    with col1:
+        vehicle = st.text_input("Όχημα")
+        mechanism = st.text_input("Μηχανισμός")
+    with col2:
+        serial_number = st.text_input("Serial Number")
+        date = st.date_input("Ημερομηνία")
     
-    pwd = st.text_input("Εισάγετε τον κωδικό πρόσβασης:", type="password")
-    if st.button("Είσοδος"):
-        if pwd == PASSWORD:
-            st.session_state["password_correct"] = True
-            st.rerun()
-        else:
-            st.error("❌ Λάθος κωδικός. Δοκιμάστε ξανά.")
-    return False
+    notes = st.text_area("Περιγραφή Βλάβης/Συντήρησης")
+    
+    submit_button = st.form_submit_button("Αποθήκευση στη Μνήμη")
+    
+    if submit_button:
+        # SQL Insert με το νέο πεδίο serial_number
+        query = "INSERT INTO faults (\"ΟΧΗΜΑ\", \"ΜΗΧΑΝΙΣΜΟΣ\", \"ΗΜΕΡΟΜΗΝΙΑ\", \"ΠΑΡΑΤΗΡΗΣΕΙΣ\", \"serial_number\") VALUES (%s, %s, %s, %s, %s)"
+        with engine.connect() as conn:
+            conn.execute(query, (vehicle, mechanism, date, notes, serial_number))
+            conn.commit()
+        st.success(f"Επιτυχία! Το Serial Number {serial_number} καταχωρήθηκε.")
 
-# Αν ο κωδικός δεν είναι σωστός, σταματάει την εκτέλεση εδώ
-if not check_password():
-    st.stop()
+st.divider()
 
-# --- ΚΥΡΙΩΣ ΕΦΑΡΜΟΓΗ ---
-# Αν φτάσει εδώ, σημαίνει ότι ο κωδικός είναι σωστός
-st.title("🛠️ Σύστημα Διαχείρισης & AI Αναζήτησης Βλαβών")
+# 3. Σύστημα Αναζήτησης με "Μνήμη"
+st.subheader("Αναζήτηση Ιστορικού Εξαρτήματος")
+search_sn = st.text_input("Εισάγετε Serial Number για εμφάνιση ιστορικού:")
 
-db_url = os.environ.get("DB_URL")
-engine = create_engine(db_url)
-
-@st.cache_data(ttl=10)
-def get_data():
+if search_sn:
+    query = f"SELECT * FROM faults WHERE serial_number = '{search_sn}' ORDER BY \"ΗΜΕΡΟΜΗΝΙΑ\" DESC"
     try:
-        return pd.read_sql("SELECT * FROM faults", engine)
-    except:
-        return pd.DataFrame(columns=["ΤΟΜΕΑΣ", "ΠΕΡΙΓΡΑΦΗ", "ΗΜΕΡΟΜΗΝΙΑ", "ΑΝΤΑΛΛΑΚΤΙΚΑ"])
-
-df = get_data()
-
-# 1. Προσθήκη νέας βλάβης
-with st.expander("➕ Προσθήκη νέας βλάβης στο ιστορικό"):
-    with st.form("add_fault", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            tomeas = st.text_input("Τομέας:")
-            perigrafi = st.text_area("Περιγραφή:")
-        with col2:
-            imera = st.text_input("Ημερομηνία (π.χ. 08/03/2026):")
-            antal = st.text_input("Ανταλλακτικά:")
+        df_history = pd.read_sql(query, engine)
         
-        if st.form_submit_button("Αποθήκευση στη βάση"):
-            if tomeas and perigrafi:
-                with engine.connect() as conn:
-                    conn.execute(text('INSERT INTO faults ("ΤΟΜΕΑΣ", "ΠΕΡΙΓΡΑΦΗ", "ΗΜΕΡΟΜΗΝΙΑ", "ΑΝΤΑΛΛΑΚΤΙΚΑ") VALUES (:t, :p, :h, :a)'), 
-                                 {"t": tomeas, "p": perigrafi, "h": imera, "a": antal})
-                    conn.commit()
-                st.success("✅ Η βλάβη προστέθηκε επιτυχώς!")
-                st.rerun()
-            else:
-                st.warning("⚠️ Παρακαλώ συμπληρώστε τουλάχιστον Τομέα και Περιγραφή.")
-
-# 2. AI Αναζήτηση
-st.divider()
-st.subheader("🔍 Αναζήτηση στο Ιστορικό")
-user_input = st.text_input("Περιγράψτε τη βλάβη που ψάχνετε:")
-
-if user_input and not df.empty:
-    results = []
-    for _, row in df.iterrows():
-        score = fuzz.token_sort_ratio(user_input.lower(), str(row['ΠΕΡΙΓΡΑΦΗ']).lower())
-        if score > 30:
-            results.append({
-                "ΤΟΜΕΑΣ": row['ΤΟΜΕΑΣ'],
-                "ΠΕΡΙΓΡΑΦΗ": row['ΠΕΡΙΓΡΑΦΗ'],
-                "ΗΜΕΡΟΜΗΝΙΑ": row['ΗΜΕΡΟΜΗΝΙΑ'],
-                "ΑΝΤΑΛΛΑΚΤΙΚΑ": row['ΑΝΤΑΛΛΑΚΤΙΚΑ'],
-                "ΟΜΟΙΟΤΗΤΑ": f"{score}%"
-            })
-    
-    if results:
-        res_df = pd.DataFrame(results).sort_values(by="ΟΜΟΙΟΤΗΤΑ", ascending=False)
-        st.table(res_df)
-    else:
-        st.info("ℹ️ Δεν βρέθηκαν παρόμοιες βλάβες.")
-
-# 3. Backup
-st.divider()
-if not df.empty:
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="💾 Κατέβασμα αντιγράφου (Backup CSV)",
-        data=csv,
-        file_name='faults_backup.csv',
-        mime='text/csv',
-    )
+        if not df_history.empty:
+            st.write(f"Βρέθηκαν {len(df_history)} εγγραφές για το {search_sn}:")
+            st.dataframe(df_history)
+        else:
+            st.warning("Δεν βρέθηκε ιστορικό για αυτό το Serial Number.")
+    except Exception as e:
+        st.error(f"Σφάλμα κατά την αναζήτηση: {e}")
