@@ -1,73 +1,95 @@
 import streamlit as st
 import pandas as pd
-import psycopg2
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from fuzzywuzzy import fuzz
 
-# 1. Ρύθμιση Σύνδεσης
-DB_URL = os.environ.get("DB_URL") # Χρησιμοποιούμε το όνομα που δουλεύει στο Render σου
-engine = create_engine(DB_URL)
+# --- ΡΥΘΜΙΣΗ ΑΣΦΑΛΕΙΑΣ ---
+PASSWORD = "ΕΕΣΣΤΥ112013$" 
 
-st.title("🔧 Σύστημα Διαχείρισης & AI Αναζήτησης Βλαβών")
-
-# 2. Φόρμα Καταχώρησης
-with st.form("fault_entry_form"):
-    st.subheader("Καταχώρηση Νέας Βλάβης")
-    col1, col2 = st.columns(2)
-    with col1:
-        vehicle = st.text_input("Όχημα")
-        mechanism = st.text_input("Μηχανισμός")
-    with col2:
-        serial_number = st.text_input("Serial Number")
-        date = st.date_input("Ημερομηνία")
-    
-    notes = st.text_area("Περιγραφή Βλάβης/Συντήρησης")
-    
-    submit_button = st.form_submit_button("Αποθήκευση στη Μνήμη")
-    
-    if submit_button:
-        # SQL Insert με το νέο πεδίο serial_number
-        query = "INSERT INTO faults (\"ΟΧΗΜΑ\", \"ΜΗΧΑΝΙΣΜΟΣ\", \"ΗΜΕΡΟΜΗΝΙΑ\", \"ΠΑΡΑΤΗΡΗΣΕΙΣ\", \"serial_number\") VALUES (%s, %s, %s, %s, %s)"
-        with engine.connect() as conn:
-            conn.execute(query, (vehicle, mechanism, date, notes, serial_number))
-            conn.commit()
-        st.success(f"Επιτυχία! Το Serial Number {serial_number} καταχωρήθηκε.")
-
-st.divider()
-
-# 3. Σύστημα Αναζήτησης με "Μνήμη"
-st.subheader("Αναζήτηση Ιστορικού Εξαρτήματος")
-search_sn = st.text_input("Εισάγετε Serial Number για εμφάνιση ιστορικού:")
-
-if search_sn:
-    query = f"SELECT * FROM faults WHERE serial_number = '{search_sn}' ORDER BY \"ΗΜΕΡΟΜΗΝΙΑ\" DESC"
-    try:
-        df_history = pd.read_sql(query, engine)
-        
-        if not df_history.empty:
-            st.write(f"Βρέθηκαν {len(df_history)} εγγραφές για το {search_sn}:")
-            st.dataframe(df_history)
+def check_password():
+    if "password_correct" not in st.session_state:
+        st.session_state["password_correct"] = False
+    if st.session_state["password_correct"]:
+        return True
+    st.set_page_config(page_title="Είσοδος - Fault AI", page_icon="🔒")
+    st.title("🔒 Είσοδος στο Σύστημα")
+    pwd = st.text_input("Εισάγετε τον κωδικό πρόσβασης:", type="password")
+    if st.button("Είσοδος"):
+        if pwd == PASSWORD:
+            st.session_state["password_correct"] = True
+            st.rerun()
         else:
-            st.warning("Δεν βρέθηκε ιστορικό για αυτό το Serial Number.")
-    except Exception as e:
-        st.error(f"Σφάλμα κατά την αναζήτηση: {e}")
+            st.error("❌ Λάθος κωδικός.")
+    return False
+
+if not check_password():
+    st.stop()
+
+# --- ΚΥΡΙΩΣ ΕΦΑΡΜΟΓΗ ---
+st.title("🛠️ Σύστημα Διαχείρισης & AI Αναζήτησης Βλαβών")
+
+db_url = os.environ.get("DB_URL")
+engine = create_engine(db_url)
+
+@st.cache_data(ttl=10)
+def get_data():
+    try:
+        return pd.read_sql("SELECT * FROM faults", engine)
+    except:
+        return pd.DataFrame(columns=["ΤΟΜΕΑΣ", "ΠΕΡΙΓΡΑΦΗ", "ΗΜΕΡΟΜΗΝΙΑ", "ΑΝΤΑΛΛΑΚΤΙΚΑ", "serial_number"])
+
+df = get_data()
+
+# 1. Προσθήκη νέας βλάβης
+with st.expander("➕ Προσθήκη νέας βλάβης στο ιστορικό"):
+    with st.form("add_fault", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            tomeas = st.text_input("Τομέας:")
+            perigrafi = st.text_area("Περιγραφή:")
+        with col2:
+            imera = st.text_input("Ημερομηνία (π.χ. 08/03/2026):")
+            antal = st.text_input("Ανταλλακτικά:")
+            serial = st.text_input("Serial Number:") # ΝΕΟ ΠΕΔΙΟ
+        
+        if st.form_submit_button("Αποθήκευση στη βάση"):
+            if tomeas and perigrafi:
+                with engine.connect() as conn:
+                    # Προσθήκη του serial_number στο query
+                    conn.execute(text('INSERT INTO faults ("ΤΟΜΕΑΣ", "ΠΕΡΙΓΡΑΦΗ", "ΗΜΕΡΟΜΗΝΙΑ", "ΑΝΤΑΛΛΑΚΤΙΚΑ", "serial_number") VALUES (:t, :p, :h, :a, :s)'), 
+                                   {"t": tomeas, "p": perigrafi, "h": imera, "a": antal, "s": serial})
+                    conn.commit()
+                st.success("✅ Η βλάβη με SN: " + serial + " προστέθηκε!")
+                st.rerun()
+            else:
+                st.warning("⚠️ Συμπληρώστε Τομέα και Περιγραφή.")
+
+# 2. AI Αναζήτηση & Serial Number Search
 st.divider()
-st.subheader("🤖 AI Ανάλυση & Αναζήτηση Ομοιοτήτων")
+st.subheader("🔍 Αναζήτηση")
+search_type = st.radio("Τύπος αναζήτησης:", ["AI (Ομοιότητες)", "Αναζήτηση με Serial Number"])
 
-# Εδώ εισάγουμε το query για το AI
-user_query = st.text_input("Περιγράψτε τι ψάχνετε (π.χ. 'παρόμοιες βλάβες στον κινητήρα'):")
+if search_type == "Αναζήτηση με Serial Number":
+    sn_input = st.text_input("Εισάγετε Serial Number:")
+    if sn_input:
+        res = df[df['serial_number'].str.contains(sn_input, case=False, na=False)]
+        st.table(res)
+else:
+    user_input = st.text_input("Περιγράψτε τη βλάβη:")
+    if user_input and not df.empty:
+        results = []
+        for _, row in df.iterrows():
+            score = fuzz.token_sort_ratio(user_input.lower(), str(row['ΠΕΡΙΓΡΑΦΗ']).lower())
+            if score > 30:
+                results.append(row.to_dict())
+        if results:
+            st.table(pd.DataFrame(results))
+        else:
+            st.info("ℹ️ Δεν βρέθηκαν παρόμοιες βλάβες.")
 
-if user_query:
-    # 1. Τραβάμε τα δεδομένα από τη βάση
-    query_all = 'SELECT "ΜΗΧΑΝΙΣΜΟΣ", "ΠΑΡΑΤΗΡΗΣΕΙΣ" FROM faults'
-    df_ai = pd.read_sql(query_all, engine)
-    
-    # 2. Απλή λογική αναζήτησης (ή κλήση σε AI API)
-    # Θα δείξουμε όσα έχουν κοινές λέξεις με το query του χρήστη
-    matches = df_ai[df_ai['ΠΑΡΑΤΗΡΗΣΕΙΣ'].str.contains(user_query, case=False, na=False)]
-    
-    if not matches.empty:
-        st.write("Βρέθηκαν παρόμοιες περιπτώσεις:")
-        st.dataframe(matches)
-    else:
-        st.info("Δεν βρέθηκαν παρόμοιες βλάβες με αυτά τα χαρακτηριστικά.")
+# 3. Backup
+st.divider()
+if not df.empty:
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button("💾 Κατέβασμα αντιγράφου (Backup CSV)", csv, 'faults_backup.csv', 'text/csv')
