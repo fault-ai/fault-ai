@@ -12,6 +12,7 @@ def check_password():
         st.session_state["password_correct"] = False
     if st.session_state["password_correct"]:
         return True
+    
     st.set_page_config(page_title="Είσοδος - Fault AI", page_icon="🔒")
     st.title("🔒 Είσοδος στο Σύστημα")
     pwd = st.text_input("Εισάγετε τον κωδικό πρόσβασης:", type="password")
@@ -26,11 +27,15 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- ΚΥΡΙΩΣ ΕΦΑΡΜΟΓΗ ---
+# --- ΣΥΝΔΕΣΗ & ΑΥΤΟΜΑΤΗ ΑΝΑΒΑΘΜΙΣΗ ΒΑΣΗΣ ---
 st.title("🛠️ Σύστημα Διαχείρισης & AI Αναζήτησης Βλαβών")
-
 db_url = os.environ.get("DB_URL")
 engine = create_engine(db_url)
+
+# Αυτόματα προσθέτει τη στήλη serial_number αν δεν υπάρχει
+with engine.connect() as conn:
+    conn.execute(text('ALTER TABLE faults ADD COLUMN IF NOT EXISTS "serial_number" TEXT;'))
+    conn.commit()
 
 @st.cache_data(ttl=10)
 def get_data():
@@ -42,7 +47,7 @@ def get_data():
 df = get_data()
 
 # 1. Προσθήκη νέας βλάβης
-with st.expander("➕ Προσθήκη νέας βλάβης στο ιστορικό"):
+with st.expander("➕ Προσθήκη νέας βλάβης"):
     with st.form("add_fault", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
@@ -51,24 +56,23 @@ with st.expander("➕ Προσθήκη νέας βλάβης στο ιστορι
         with col2:
             imera = st.text_input("Ημερομηνία (π.χ. 08/03/2026):")
             antal = st.text_input("Ανταλλακτικά:")
-            serial = st.text_input("Serial Number:") # ΝΕΟ ΠΕΔΙΟ
+            serial = st.text_input("Serial Number:")
         
-        if st.form_submit_button("Αποθήκευση στη βάση"):
+        if st.form_submit_button("Αποθήκευση"):
             if tomeas and perigrafi:
                 with engine.connect() as conn:
-                    # Προσθήκη του serial_number στο query
                     conn.execute(text('INSERT INTO faults ("ΤΟΜΕΑΣ", "ΠΕΡΙΓΡΑΦΗ", "ΗΜΕΡΟΜΗΝΙΑ", "ΑΝΤΑΛΛΑΚΤΙΚΑ", "serial_number") VALUES (:t, :p, :h, :a, :s)'), 
                                    {"t": tomeas, "p": perigrafi, "h": imera, "a": antal, "s": serial})
                     conn.commit()
-                st.success("✅ Η βλάβη με SN: " + serial + " προστέθηκε!")
+                st.success("✅ Καταχωρήθηκε!")
                 st.rerun()
             else:
                 st.warning("⚠️ Συμπληρώστε Τομέα και Περιγραφή.")
 
-# 2. AI Αναζήτηση & Serial Number Search
+# 2. Αναζήτηση & AI
 st.divider()
 st.subheader("🔍 Αναζήτηση")
-search_type = st.radio("Τύπος αναζήτησης:", ["AI (Ομοιότητες)", "Αναζήτηση με Serial Number"])
+search_type = st.radio("Τύπος:", ["AI (Ομοιότητες)", "Αναζήτηση με Serial Number"])
 
 if search_type == "Αναζήτηση με Serial Number":
     sn_input = st.text_input("Εισάγετε Serial Number:")
@@ -92,4 +96,4 @@ else:
 st.divider()
 if not df.empty:
     csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("💾 Κατέβασμα αντιγράφου (Backup CSV)", csv, 'faults_backup.csv', 'text/csv')
+    st.download_button("💾 Κατέβασμα Backup (CSV)", csv, 'faults_backup.csv', 'text/csv')
