@@ -69,7 +69,7 @@ with st.expander("➕ Προσθήκη νέας βλάβης"):
             else:
                 st.warning("⚠️ Συμπληρώστε Τομέα και Περιγραφή.")
 
-# 2. Αναζήτηση & AI
+# 2. AI Αναζήτηση & Serial Number Search
 st.divider()
 st.subheader("🔍 Αναζήτηση")
 search_type = st.radio("Τύπος:", ["AI (Ομοιότητες)", "Αναζήτηση με Serial Number"])
@@ -80,18 +80,28 @@ if search_type == "Αναζήτηση με Serial Number":
         res = df[df['serial_number'].str.contains(sn_input, case=False, na=False)]
         st.table(res)
 else:
-    user_input = st.text_input("Περιγράψτε τη βλάβη:")
+    user_input = st.text_input("Περιγράψτε τη βλάβη (π.χ. 'χαμηλή τάση'):")
     if user_input and not df.empty:
         results = []
         for _, row in df.iterrows():
-            score = fuzz.token_sort_ratio(user_input.lower(), str(row['ΠΕΡΙΓΡΑΦΗ']).lower())
-            if score > 30:
-                results.append(row.to_dict())
+            desc = str(row['ΠΕΡΙΓΡΑΦΗ']).lower()
+            query = user_input.lower()
+            
+            # --- ΒΕΛΤΙΩΣΗ: Πιο αυστηρό σκοράρισμα ---
+            # Χρησιμοποιούμε token_set_ratio για να πιάσουμε καλύτερα τις λέξεις
+            score = fuzz.token_set_ratio(query, desc)
+            
+            # Ανεβάζουμε το όριο στο 65 για να είναι πιο σχετικά τα αποτελέσματα
+            if score > 65:
+                row_dict = row.to_dict()
+                row_dict['ΟΜΟΙΟΤΗΤΑ'] = f"{score}%"
+                results.append(row_dict)
+        
         if results:
-            st.table(pd.DataFrame(results))
+            res_df = pd.DataFrame(results).sort_values(by="ΟΜΟΙΟΤΗΤΑ", ascending=False)
+            st.table(res_df)
         else:
-            st.info("ℹ️ Δεν βρέθηκαν παρόμοιες βλάβες.")
-
+            st.info("ℹ️ Δεν βρέθηκαν πολύ σχετικά αποτελέσματα. Δοκιμάστε πιο συγκεκριμένες λέξεις.")
 # 3. Backup
 st.divider()
 if not df.empty:
